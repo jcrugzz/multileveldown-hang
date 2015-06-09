@@ -18,6 +18,8 @@ function generateIds(len) {
 function Repro(options) {
   options = options || {};
 
+  this.task = options.task || 'write';
+
   this.path = options.path || 'test.db';
   this.port = options.port || 3000;
   this.ids = generateIds(100);
@@ -42,16 +44,10 @@ Repro.prototype._onConnect = function (err) {
   var self = this;
   if (err) return this.emit('error', err);
 
-  this.spawn('write', function (err) {
+  this.spawn(this.task, function (err) {
     if (err) return self.emit('error', err);
-    console.log('done writing');
-
-    this.spawn('read', function (err) {
-      if (err) return self.emit('error', err);
-      this.emit('finish');
-    });
-
-  }.bind(this));
+    this.emit('finish');
+  });
 
 };
 
@@ -61,7 +57,9 @@ Repro.prototype.spawn = function (type, callback) {
     .fork({ action: type, ids: this.ids }, callback);
 };
 
-var repro = new Repro()
+var argv = process.argv.slice(2);
+
+var repro = new Repro({ task: argv[0] })
   .on('error', function (err) {
     console.error(err);
     process.exit(1);

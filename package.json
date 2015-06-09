@@ -4,7 +4,8 @@
   "description": "Reproduces an issue where we hang when reading and deleting from multileveldown",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "node index.js read",
+    "setup": "node index.js write",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
