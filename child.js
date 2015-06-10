@@ -47,6 +47,7 @@ var fork = new Forkee()
       ended = true;
       socket.destroy();
       db.close(function (err) {
+        console.log('db closed');
         if (err) { return callback(err); }
         callback.apply(null, args);
       });

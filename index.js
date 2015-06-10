@@ -22,7 +22,6 @@ function Repro(options) {
 
   this.path = options.path || 'test.db';
   this.port = options.port || 3000;
-  this.ids = generateIds(100);
 
   this._level = level(this.path, { valueEncoding: 'json' });
 
@@ -44,17 +43,52 @@ Repro.prototype._onConnect = function (err) {
   var self = this;
   if (err) return this.emit('error', err);
 
-  this.spawn(this.task, function (err) {
-    if (err) return self.emit('error', err);
-    this.emit('finish');
+  this.load(function () {
+    self.spawn(self.task, function (err) {
+      if (err) return self.emit('error', err);
+      return self.task === 'read'
+        ? self.cleanup()
+        : self.emit('finish');
+    });
   });
 
 };
 
+Repro.prototype.cleanup = function () {
+  var self = this;
+  this._level.del('ids', function (err) {
+    if (err) { return self.emit('error', err); }
+    self.emit('finish');
+  });
+};
+
+Repro.prototype.load = function (cb) {
+  var self = this;
+  if (this.task === 'write') {
+    this.ids = generateIds(100);
+    return this.store(this.ids, cb);
+  }
+
+  this._level.get('ids', function (err, ids) {
+    if (err) { return self.emit('error', err); }
+    self.ids = ids;
+    cb();
+  });
+
+};
+
+Repro.prototype.store = function (ids, cb) {
+  var self = this;
+  this._level.put('ids', ids, function (err) {
+    if (err) { return self.emit('error', err); }
+    cb();
+  });
+}
+
 Repro.prototype.spawn = function (type, callback) {
-  callback = once(callback);
+  var fn = once(callback);
   return new Fork(child)
-    .fork({ action: type, ids: this.ids }, callback);
+    .fork({ action: type, ids: this.ids }, fn);
 };
 
 var argv = process.argv.slice(2);
@@ -65,7 +99,7 @@ var repro = new Repro({ task: argv[0] })
     process.exit(1);
   })
   .on('finish', function () {
-    console.log('Test case finished');
+    console.log('%s case finished', repro.task);
     process.exit(0);
   });
 
