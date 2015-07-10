@@ -21,7 +21,7 @@ function Repro(options) {
 
   this.task = options.task || 'write';
 
-  this.number = options.number || 3;
+  this.number = options.number || 1;
   this.iteration = 0;
 
   this.path = options.path || 'test.db';
