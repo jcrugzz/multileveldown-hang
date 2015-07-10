@@ -3,6 +3,7 @@ var net = require('net');
 var once = require('one-time');
 var Fork = require('fork');
 var level = require('level-hyper');
+var async = require('async');
 var multilevel = require('multileveldown');
 var uuid = require('uuid');
 
@@ -19,6 +20,9 @@ function Repro(options) {
   options = options || {};
 
   this.task = options.task || 'write';
+
+  this.number = options.number || 3;
+  this.iteration = 0;
 
   this.path = options.path || 'test.db';
   this.port = options.port || 3000;
@@ -42,53 +46,79 @@ Repro.prototype.constructor = Repro;
 Repro.prototype._onConnect = function (err) {
   var self = this;
   if (err) return this.emit('error', err);
-
-  this.load(function () {
-    self.spawn(self.task, function (err) {
-      if (err) return self.emit('error', err);
-      return self.task === 'read'
-        ? self.cleanup()
-        : self.emit('finish');
-    });
-  });
-
+  this.sequence();
 };
 
-Repro.prototype.cleanup = function () {
+Repro.prototype.sequence = function () {
   var self = this;
-  this._level.del('ids', function (err) {
-    if (err) { return self.emit('error', err); }
-    self.emit('finish');
+  var action = 'series';
+  async[action](
+    this.functions(),
+    function (err) {
+      if (err) { return this.emit('error', err); }
+      self.finish();
+    });
+
+};
+
+Repro.prototype.functions = function () {
+  var self = this;
+  return Array.apply(null, new Array(this.number)).map(function (_, idx) {
+    return self.once.bind(self, idx);
   });
 };
 
-Repro.prototype.load = function (cb) {
+Repro.prototype.once = function (idx, cb) {
+  var self = this;
+  async.waterfall([
+    this.load.bind(this, idx),
+    this.spawn.bind(this)
+  ], function (err) {
+    if (err) { return cb(err); }
+    return self.task == 'read'
+      ? self.cleanup(idx, cb)
+      : cb();
+  });
+};
+
+Repro.prototype.finish = function () {
+  this.emit('finish');
+};
+
+Repro.prototype.cleanup = function (idx, cb) {
+  var self = this;
+  this._level.del('ids' + idx, cb);
+};
+
+Repro.prototype.load = function (idx, cb) {
   var self = this;
   if (this.task === 'write') {
-    this.ids = generateIds(100);
-    return this.store(this.ids, cb);
+    var ids = generateIds(1000);
+    return this.store(ids, idx, cb);
   }
 
-  this._level.get('ids', function (err, ids) {
-    if (err) { return self.emit('error', err); }
-    self.ids = ids;
-    cb();
+  this._level.get('ids' + idx, function (err, ids) {
+    if (err) { return cb(err); }
+    cb(null, ids);
   });
 
 };
 
-Repro.prototype.store = function (ids, cb) {
+Repro.prototype.store = function (ids, idx, cb) {
   var self = this;
-  this._level.put('ids', ids, function (err) {
-    if (err) { return self.emit('error', err); }
-    cb();
+  this._level.put('ids' + idx, ids, function (err) {
+    if (err) { return cb(err); }
+    cb(null, ids);
   });
 }
 
-Repro.prototype.spawn = function (type, callback) {
+Repro.prototype.spawn = function (ids, callback) {
   var fn = once(callback);
-  return new Fork(child)
-    .fork({ action: type, ids: this.ids }, fn);
+  return new Fork({
+    path: child,
+    execArgv: ['--max_old_space_size=4096']
+  })
+    .fork({ action: this.task, ids: ids }, fn);
 };
 
 var argv = process.argv.slice(2);
