@@ -9,20 +9,19 @@ var net = require('net');
 var uuid = require('uuid');
 var faker = require('faker');
 var monotonic = require('monotonic-timestamp');
-var parallel = require('concurrent-writable');
-var through = require('through2');
-var streamify = require('stream-array');
-var writeOnly = require('write-only-stream');
-var after = require('after');
 
-function generateArrayWithId(id, len) {
+function generateBatchWithId(id, len) {
   return Array.apply(null, new Array(len))
     .map(function () {
       return {
-        id: id,
-        name: faker.name.findName(),
-        email: faker.internet.email(),
-        descripton: faker.lorem.paragraphs()
+        type: 'put',
+        key: monotonic(),
+        value: {
+          id: id,
+          name: faker.name.findName(),
+          email: faker.internet.email(),
+          descripton: faker.lorem.paragraphs()
+        }
       }
     });
 }
@@ -53,7 +52,6 @@ var fork = new Forkee()
       });
     });
 
-    console.log('what the fuck')
     connect(data.port || 3000, function () {
       console.log('connected?');
       all = data.ids.length;
@@ -158,75 +156,12 @@ function write(data, callback) {
     return acc;
   }, {});
 
-  var next = after(ids.length, callback);
-
-  var dests = ids.map(function (id) {
-    return createStream(id, next);
-  });
-
-  //
-  // Pipe recursively while sticking in some setImmediates to give the event
-  // loop some space
-  //
-  recursivePipe(ids, dests);
-
+  async.each(ids, function (id, next) {
+    var db = sublevels[id];
+    db.batch(generateBatchWithId(id, 100), next);
+  }, callback);
 }
 
-function recursivePipe(ids, dests) {
-
-  var id;
-
-  if (!(id = ids.shift())) {
-    console.log('out of sources');
-    return;
-  }
-
-  var source = streamify(generateArrayWithId(id, 500));
-
-  console.log('pipe source');
-  var dest = dests.shift();
-
-  source
-    .on('error', function (err) {
-      console.error(err);
-      console.log('stream error');
-    })
-    .pipe(dest)
-    .on('error', function (err) {
-      console.error(err);
-      console.log('stream error');
-    })
-
-  setImmediate(function () {
-    recursivePipe(ids, dests);
-  });
-}
-
-function createStream (id, done) {
-  var stream = through.obj();
-  var sub = sublevels[id];
-
-  stream
-    .pipe(through.obj(function (data, enc, cb) {
-      cb(null, {
-        type: 'put',
-        key: monotonic().toString(),
-        value: data
-      });
-    }))
-    .pipe(new BatchStream({ size: 10 }))
-    .pipe(parallel(new LevelBatch(sub), 5))
-    .on('retry', function (data) {
-      console.log('retrying writing %j to disk', data);
-    })
-    .on('finish', function () {
-      console.log('finished writing %s', id);
-      console.log('%d out of %d finished', ++total, all);
-      done();
-    });
-
-    return writeOnly(stream);
-}
 
 /**
  * A delete that doesn't fail because it retries recursively using setImmediate
@@ -240,7 +175,6 @@ function resilDelete(d, key, cb) {
         return void setImmediate(resilDelete, d, key, cb);
       }
     }
-
     cb();
   });
 }
